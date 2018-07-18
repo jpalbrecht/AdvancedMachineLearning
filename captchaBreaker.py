@@ -282,7 +282,7 @@ def get_label_ind(img_kmeans_l):
 
     Output:
         label_ind_l         - list linking from position of label to cluster-position
-        label_ind_rew_l     - dictionary linking from cluster-position to label in
+        cluster_ind_l       - dictionary linking from cluster-position to label
     """
     # ## get labeling ###
     # extract label from picture name
@@ -300,11 +300,11 @@ def get_label_ind(img_kmeans_l):
     label_ind_l = sorted(range(len(x_centers)), key=lambda k: x_centers[k])
 
     # create backwards dict for later reverse lookup
-    label_ind_rew_l = dict()
+    cluster_ind_l = dict()
     for idx in range(len(x_centers)):
-        label_ind_rew_l[label_ind_l[idx]] = idx
+        cluster_ind_l[label_ind_l[idx]] = idx
 
-    return label_ind_l, label_ind_rew_l
+    return label_ind_l, cluster_ind_l
 
 
 def shift_x_axis(label_ind_x_l, new_mean):
@@ -358,14 +358,14 @@ def subpicturing(img_bin_morph_crop_l, img_name_l, indices_l, kmeans_l, debug=Fa
     Output:
         sub_img_list_l      - list, containing all isolated letters in img_bin_morph_crop_l as images themself
         label_names         - label to all isolated letter images in sub_img_list_l
-        label_ind_rew       - dictionary linking from cluster-position in img_bin_morph_crop_l to letter in label_names,
+        cluster_ind         - dictionary linking from cluster-position in img_bin_morph_crop_l to letter in label_names,
                                     since kmeans algorithm does not "read" letters in
                                     img_bin_morph_crop_l from left to right !
     """
     # ## sub-picturing ###
     dim_img_bmc = img_bin_morph_crop_l.shape
     # get the label_indices for later lookup of the subpictures-label
-    label_ind, label_ind_rew = get_label_ind(kmeans_l)
+    label_ind, cluster_ind = get_label_ind(kmeans_l)
 
     # for each label produce its own picture since it is hopefully an own letter
     kmean_label = np.unique(kmeans_l.labels_)
@@ -406,7 +406,7 @@ def subpicturing(img_bin_morph_crop_l, img_name_l, indices_l, kmeans_l, debug=Fa
         # return sub-pictures with corresponding labeling
         sub_img_list_l.append(letter_pic)
 
-    return sub_img_list_l, label_names, label_ind_rew
+    return sub_img_list_l, label_names, cluster_ind
 
 
 def preprocess_data(load_path, save_path="",
@@ -430,7 +430,7 @@ def preprocess_data(load_path, save_path="",
     Output:
         processed_img_list_l        - list with preprocessed img(s)
         label_img_list_l            - label of each image in processed_img_list_l
-        label_dict_rew_list_l       - list with number_transform copies of each image
+        cluster_dict_list_l       - list with number_transform copies of each image
     """
     # either we load the preprocessed data or we do the preprocessing
     if load_data:
@@ -450,7 +450,7 @@ def preprocess_data(load_path, save_path="",
         # define a huge datasets
         processed_img_list_l = []
         label_img_list_l = []
-        label_dict_rew_list_l = []
+        cluster_dict_list_l = []
 
         # list over all elements
         for img_idx, img_name in enumerate(img_list):
@@ -475,15 +475,15 @@ def preprocess_data(load_path, save_path="",
                 img_bin_morph_crop = crop_pictures(img_bin_morph, 4, pdf_page=pdf_page, debug=debug)
                 indices = extract_pixel(img_bin_morph_crop)
                 img_kmeans = cluster_image(indices, pdf_page=pdf_page, debug=debug)
-                sub_img_list, label_name, label_ind_rew = subpicturing(img_bin_morph_crop,
-                                                                       filename, indices,
-                                                                       img_kmeans, debug, pdf_page, train=train)
+                sub_img_list, label_name, cluster_dict = subpicturing(img_bin_morph_crop,
+                                                                      filename, indices,
+                                                                      img_kmeans, debug, pdf_page, train=train)
                 # add to one BIG set
                 for i in range(len(sub_img_list)):
                     processed_img_list_l.append(sub_img_list[i])
                     if train:
                         label_img_list_l.append(label_name[i])
-                label_dict_rew_list_l.append(label_ind_rew)
+                cluster_dict_list_l.append(cluster_dict)
 
         # save img_list
         if not save_path == "":
@@ -496,9 +496,9 @@ def preprocess_data(load_path, save_path="",
 
             # save label dictionary
             with open(save_path + "label_dict_list", "wb+") as fp:
-                pickle.dump(label_dict_rew_list_l, fp)
+                pickle.dump(cluster_dict_list_l, fp)
 
-        return processed_img_list_l, label_img_list_l, label_dict_rew_list_l
+        return processed_img_list_l, label_img_list_l, cluster_dict_list_l
 
 
 def augment_data(processed_img_list_l,
@@ -660,7 +660,7 @@ def train_model(paia_shape_l,
     history_l = own_model_l.fit(x_train_l,
                                 y_train_l,
                                 batch_size=100,
-                                epochs=4,
+                                epochs=6,
                                 verbose=1,
                                 validation_data=(x_val_l, y_val_l))
 
@@ -772,14 +772,15 @@ def train_routine(data_path_l, res_path_l, test_save_path_l,
     return own_model_l, history_l, label_aug_img_dict
 
 
-def get_pred_results(pred_list_l, label_dict_rew, verbose=True):
+def get_pred_results(pred_list_l, label_dict, cluster_dict, verbose=True):
     """
     Function to predict translate between categorical prediction and real letter behind categorical.
     The prediction will be additionally sorted into the right order
 
     Inputs:
         pred_list_l         - the prediction as list as categorical
-        label_dict_rew      - dictionary giving the right order of the prediction in pred_list_l
+        label_dict          - dictionary linking from categorical class to letter
+        cluster_dict        - dictionary giving the right order of the prediction in pred_list_l
         verbose             - flag indicating more output
 
     Output:
@@ -787,9 +788,9 @@ def get_pred_results(pred_list_l, label_dict_rew, verbose=True):
     """
     pred_list_char = np.empty(5, dtype=str)
     for idxs, pred in enumerate(pred_list_l):
-        for key in label_dict_rew.keys():
-            if label_dict_rew[key] == pred:
-                pred_list_char[label_dict_rew[idxs]] = key
+        for key in label_dict.keys():
+            if label_dict[key] == pred:
+                pred_list_char[cluster_dict[idxs]] = key
     # print out results
     if verbose:
         for pred_char in pred_list_char:
@@ -800,13 +801,14 @@ def get_pred_results(pred_list_l, label_dict_rew, verbose=True):
     return pred_list_char
 
 
-def predict_single_img(model_l, img_path_l, verbose=True, debug=False, pdf_page=None):
+def predict_single_img(model_l, img_path_l, label_dict_l, verbose=True, debug=False, pdf_page=None):
     """
     Function to predict a single image file given the model.
 
     Inputs:
         model_l         - path to folder containing: own_model.h5, own_model_history, own_model_class_dict
         img_path_l      - path to image file, must be png format, label for machine unknown
+        label_dict_l    - dictionary linking from categorical class to letter
         verbose         - flag indicating more output
         debug           - flag indicating to print debug plots of processing procedure
         pdf_page        - PdfPages object, all plots will be written to pdf
@@ -815,9 +817,9 @@ def predict_single_img(model_l, img_path_l, verbose=True, debug=False, pdf_page=
         pred_list_char  - the prediction (not categorical, real letters) as list
     """
     # preprocess single picture, not knowing the labels (train=False)
-    proc_img_lst_l, label_img_lst_l, label_dict_rew_lst_l = preprocess_data(img_path_l,
-                                                                            load_data=False, verbose=verbose,
-                                                                            debug=debug, pdf_page=pdf_page, train=False)
+    proc_img_lst_l, label_img_lst_l, cluster_dict_lst_l = preprocess_data(img_path_l,
+                                                                          load_data=False, verbose=verbose,
+                                                                          debug=debug, pdf_page=pdf_page, train=False)
     # check if result not empty
     if not proc_img_lst_l:
         return []
@@ -831,7 +833,7 @@ def predict_single_img(model_l, img_path_l, verbose=True, debug=False, pdf_page=
     # translate categoricals to characters and bring prediction in correct order
     if verbose:
         print("predicted for loaded image: ")
-    pred_list_char = get_pred_results(pred_list, label_dict_rew_lst_l[0], verbose=verbose)
+    pred_list_char = get_pred_results(pred_list, label_dict_l, cluster_dict_lst_l[0], verbose=verbose)
 
     return pred_list_char
 
@@ -870,7 +872,7 @@ train_save_path = "captcha_dataset/train/"
 
 # train model without loading preprocessed images
 # own_model, history, own_model_class_dict = train_routine(data_path, res_path, test_save_path, train_save_path,
-#                                                          load_pictures=False, save_model_flag=True)
+#                                                         load_pictures=False, save_model_flag=True)
 # train model with loading preprocessed images
 # train_routine(data_path, res_path, test_save_path, train_save_path, load_pictures=True,
 # save_model_flag=True, debug=True)
@@ -879,17 +881,17 @@ train_save_path = "captcha_dataset/train/"
 own_model, history, class_dict = load_own_model(res_path)
 
 # create pdf output
-# pp = PdfPages(res_path + "plots.pdf")
-# plot_hist(history, pdf_page=pp)
-# res = predict_single_img(own_model, test_save_path + "5ywwf.png", verbose=True, debug=True, pdf_page=pp)
-# pp.close()
+pp = PdfPages(res_path + "plots.pdf")
+plot_hist(history, pdf_page=pp)
+res = predict_single_img(own_model, test_save_path + "6xpme.png", class_dict, verbose=True, debug=True, pdf_page=pp)
+pp.close()
 
 # predict all test img and compare prediction with name
 img_name_list = os.listdir(test_save_path)
 error = 0
 correct = 0
 for img in img_name_list:
-    p = predict_single_img(own_model, test_save_path + img, verbose=False, debug=False)
+    p = predict_single_img(own_model, test_save_path + img, class_dict, verbose=False, debug=False)
     # compare with name
     if ''.join(p) not in img:
         error = error + 1
