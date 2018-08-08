@@ -605,7 +605,7 @@ def plot_hist(hist_l, pdf_page=None):
     ax.legend(loc='lower right')
 
     fig2 = plt.figure()
-    ax2 = fig.add_subplot(111)
+    ax2 = fig2.add_subplot(111)
     ax2.plot(hist_l['loss'], label='Training Loss')
     ax2.plot(hist_l['val_loss'], label='Validation Loss')
     ax2.legend()
